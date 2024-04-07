@@ -31,6 +31,9 @@ class ProcessorChainBuilder:
         if 'slack' in notifiers:
             self.processors.append(SenderSlack(self.config))
         return self
+    
+    def send_emails(self):
+        """Add processor that sends email to contact"""
 
     def resolve_addresses(self):
         """Add processor that resolves addresses from expose pages"""

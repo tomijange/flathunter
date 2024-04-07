@@ -11,6 +11,9 @@
           {% endif %}
         </a>
         <h3><a href="{{ expose['url'] }}" rel="noreferrer" target="_blank">{{ expose['title'] }}</a></h3>
+        <script>
+          console.log(JSON.parse('{{ expose | tojson }}'))
+        </script>
       </div>
     </div>
   {% endfor %}

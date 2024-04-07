@@ -44,11 +44,13 @@ class Hunter:
                            .build()
 
         processor_chain = ProcessorChain.builder(self.config) \
-                                        .save_all_exposes(self.id_watch) \
+                                        .crawl_expose_details() \
                                         .apply_filter(filter_set) \
+                                        .save_all_exposes(self.id_watch) \
                                         .resolve_addresses() \
                                         .calculate_durations() \
                                         .send_messages() \
+                                        .send_emails() \
                                         .build()
 
         result = []
