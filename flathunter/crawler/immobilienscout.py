@@ -1,12 +1,17 @@
 """Expose crawler for ImmobilienScout"""
+import time
 from typing import Optional
 import datetime
 import re
 
 from bs4 import BeautifulSoup, Tag
 from jsonpath_ng.ext import parse
-from selenium.common.exceptions import JavascriptException
+import pyotp
+from selenium.common.exceptions import JavascriptException, TimeoutException
 from selenium.webdriver import Chrome
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
 
 from flathunter.abstract_crawler import Crawler
 from flathunter.logging import logger
@@ -48,6 +53,7 @@ class Immobilienscout(Crawler):
         super().__init__(config)
 
         self.config = config
+        self.auth = config.get_auth("immoscout")
         self.driver = None
         self.checkbox = False
         self.afterlogin_string = None
@@ -61,10 +67,10 @@ class Immobilienscout(Crawler):
         """Lazy method to fetch the driver as required at runtime"""
         if self.driver is not None:
             return self.driver
-        if not (self.config.captcha_enabled() and self.captcha_solver):
+        if not (self.config.captcha_enabled() and self.captcha_solver or self.config.get_is_captcha_manual()):
             return None
         driver_arguments = self.config.captcha_driver_arguments()
-        self.driver = get_chrome_driver(driver_arguments)
+        self.driver = get_chrome_driver(driver_arguments, not self.config.get_is_captcha_manual())
         return self.driver
 
     def get_driver_force(self) -> Chrome:
@@ -189,6 +195,147 @@ class Immobilienscout(Crawler):
         if date is not None:
             if not re.match(r'.*sofort.*', date.text):
                 expose['from'] = date.text.strip()
+        return expose
+    
+
+    def solve_captcha(self, driver):
+        # check for captcha
+        if re.search("initGeetest", driver.page_source):
+            self.resolve_geetest(driver)
+        elif re.search("g-recaptcha", driver.page_source):
+            self.resolve_recaptcha(driver, False, "")
+        
+
+
+    def login(self, driver):
+        """Login to ImmobilienScout"""
+
+        login_button = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[title=Anmelden]')))
+        logged_in = not login_button.is_displayed()
+        if logged_in:
+            logger.debug("Already logged in")
+            return
+
+        driver.get('https://www.immobilienscout24.de/anmelden')
+        self.solve_captcha(driver)
+
+        login_form = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'loginForm')))
+        if not login_form:
+            logger.error("Login form not found, probably already logged in")
+            return
+        
+        login_form.find_element(By.NAME, 'username').send_keys(self.auth["username"])
+        login_form.submit()
+
+        self.solve_captcha(driver)
+        
+        login_form = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, 'loginForm')))
+        password = login_form.find_element(By.NAME, 'password')
+        password.send_keys(self.auth["password"])
+
+        
+        login_form.submit()
+
+        self.solve_captcha(driver)
+
+        otp = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[name=answer]')))
+        if not otp:
+            logger.error("OTP input not found")
+            return
+        
+        totp = pyotp.TOTP(self.auth["otp_secret"])    
+        otp.send_keys(totp.now())
+
+        otp.submit()
+
+        my_area_visible = WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CSS_SELECTOR, 'div[title="Mein Bereich"]')))
+
+    
+    def send_email(self, expose):
+        """Sends email to contact"""
+        logger.debug("Sending email to contact")
+
+        driver = self.get_driver_force()
+
+        self.login(driver)
+
+        driver.get(expose['url'])
+
+        # check for captcha
+        if re.search("initGeetest", driver.page_source):
+            self.resolve_geetest(driver)
+        elif re.search("g-recaptcha", driver.page_source):
+            self.resolve_recaptcha(driver, False, "")
+
+        # just accept all cookies
+        try: 
+            cookie_banner = WebDriverWait(driver, 1).until(EC.presence_of_element_located((By.CSS_SELECTOR, '#usercentrics-root')))
+            time.sleep(1)
+            accept_all = cookie_banner.shadow_root.find_element(By.CSS_SELECTOR, 'button[data-testid="uc-accept-all-button"]')
+            accept_all.click()
+        except TimeoutException:
+            logger.debug("No cookie banner found")
+
+
+        try: 
+            send_button = driver.find_element(By.CSS_SELECTOR, 'a[data-qa=sendButton]')
+            if not send_button:
+                logger.error("Send button not found")
+                return expose
+            send_button.click()
+            
+            
+            form = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, 'form[name="contactFormContainer.form"]')))
+            if not form:
+                logger.error("Form not found")
+                return expose
+            
+            time.sleep(1)
+            message = WebDriverWait(driver, 3).until(EC.visibility_of_element_located((By.NAME, 'message')))
+            message.clear()
+
+            salutation = "Sehr geehrte Damen und Herren"
+            gender = expose.get('contact_details', {}).get('salutation', None)
+            lastname = expose.get('contact_details', {}).get('lastname', None)
+            if lastname:
+                if gender == 'FEMALE':
+                    salutation = f"Sehr geehrte Frau {lastname}"
+                elif gender == 'MALE':
+                    salutation = f"Sehr geehrter Herr {lastname}"
+
+            message.send_keys(self.config.get_auto_email_message().format(
+                    salutation=salutation,
+                    crawler=expose.get('crawler', 'N/A'),
+                    title=expose.get('title', 'N/A'),
+                    rooms=expose.get('rooms', 'N/A'),
+                    size=expose.get('size', 'N/A'),
+                    price=expose.get('price', 'N/A'),
+                    url=expose.get('url', 'N/A'),
+                    address=expose.get('address', 'N/A'),
+                    durations=expose.get('durations', 'N/A')
+                ).strip()
+            )
+
+            form_elements = form.find_elements(By.CSS_SELECTOR, 'input,select')
+            fields = self.config.get_auto_email_fields()
+            for element in form_elements:
+                name = element.get_attribute('name')
+                if element.is_displayed():
+                    logger.debug(element.get_attribute('name'))
+                    field = fields.get(name, None)
+                    if field:
+                        element.clear()
+                        element.send_keys(field)
+                        logger.debug(f"Sending value to {name}: {field}")
+            
+            time.sleep(1)
+            form.find_element(By.CSS_SELECTOR, 'button[data-qa="sendButtonBasic"]').click()
+            logger.info("Email sent")
+            time.sleep(3)
+        except Exception as e:
+            logger.exception(e)
+            logger.error("Timeout while sending email")
+            return expose
         return expose
 
     # pylint: disable=too-many-locals

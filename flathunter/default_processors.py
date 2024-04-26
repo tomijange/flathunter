@@ -56,3 +56,17 @@ class LambdaProcessor(Processor):
         """Apply the lambda function to each expose"""
         res = self.func(expose)
         return res
+
+class AutoEmailProcessor(Processor):
+    """Processor to send email to contact"""
+
+    def __init__(self, config):
+        self.config = config
+
+    def process_expose(self, expose):
+        """Send email to contact"""
+        logger.debug("Sending email for expose %s", expose['title'])
+        for searcher in self.config.searchers():
+            if re.search(searcher.URL_PATTERN, expose['url']):
+                searcher.send_email(expose)
+        return expose

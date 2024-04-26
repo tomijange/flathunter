@@ -294,6 +294,9 @@ Preis: {price}
         """API Token for 2captcha"""
         return self._read_yaml_path("captcha.2captcha.api_key", "")
 
+    def get_is_captcha_manual(self) -> bool:
+        return str(self._read_yaml_path("captcha.manual", 'false')).lower() == 'true'
+
     def _get_captcha_solver(self) -> Optional[CaptchaSolver]:
         """Get configured captcha solver"""
         imagetyperz_token = self._get_imagetyperz_token()
@@ -324,6 +327,24 @@ Preis: {price}
     def set_keys(self, dict_keys: Dict[str, Any]):
         """Update the config keys based on the content of the dictionary passed"""
         self.config.update(dict_keys)
+
+    def _get_auto_email_config(self, key: str) -> Optional[Any]:
+        return self.config.get("auto_email", {}).get(key, None)
+    
+    def get_auto_email_active(self):
+        """Check if auto email is enabled"""
+        return self._get_auto_email_config("active")
+    
+    def get_auto_email_message(self):
+        """Return the configured auto email message"""
+        return self._get_auto_email_config("message")
+    
+    def get_auto_email_fields(self):
+        """Return the configured auto email fields"""
+        return self._get_auto_email_config("fields")
+
+    def get_auth(self, key: str) -> Optional[Dict[str, Any]]:
+        return self.config.get("auth", {}).get(key, None)
 
     def _get_filter_config(self, key: str) -> Optional[Any]:
         return (self.config.get("filters", {}) or {}).get(key, None)

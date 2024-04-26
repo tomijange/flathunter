@@ -55,17 +55,20 @@ def get_chrome_version() -> int:
         pass
     raise ChromeNotFound()
 
-def get_chrome_driver(driver_arguments):
+def get_chrome_driver(driver_arguments, block_urls=True):
     """Configure Chrome WebDriver"""
     logger.info('Initializing Chrome WebDriver for crawler...')
     chrome_options = uc.ChromeOptions() # pylint: disable=no-member
     if platform == "darwin":
-        chrome_options.add_argument("--headless")
+        if block_urls:
+            chrome_options.add_argument("--headless")
+        pass
     if driver_arguments is not None:
         for driver_argument in driver_arguments:
             chrome_options.add_argument(driver_argument)
     chrome_version = get_chrome_version()
-    chrome_options.add_argument("--headless=new")
+    if block_urls:
+        chrome_options.add_argument("--headless=new")
     driver = uc.Chrome(version_main=chrome_version, options=chrome_options) # pylint: disable=no-member
 
     driver.execute_cdp_cmd(
@@ -76,8 +79,8 @@ def get_chrome_driver(driver_arguments):
                          "Chrome/120.0.0.0 Safari/537.36"
         },
     )
-
-    driver.execute_cdp_cmd('Network.setBlockedURLs',
-        {"urls": ["https://api.geetest.com/get.*"]})
+    if block_urls:
+        driver.execute_cdp_cmd('Network.setBlockedURLs',
+            {"urls": ["https://api.geetest.com/get.*"]})
     driver.execute_cdp_cmd('Network.enable', {})
     return driver

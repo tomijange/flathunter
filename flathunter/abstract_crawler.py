@@ -59,7 +59,7 @@ class Crawler(ABC):
     def get_soup_from_url(
             self,
             url: str,
-            driver: Optional[Any] = None,
+            driver: Optional[Chrome] = None,
             checkbox: bool = False,
             afterlogin_string: Optional[str] = None) -> BeautifulSoup:
         """Creates a Soup object from the HTML at the provided URL"""
@@ -168,6 +168,10 @@ class Crawler(ABC):
                           max_tries=3)
     def resolve_geetest(self, driver):
         """Resolve GeeTest Captcha"""
+        if self.config.get_is_captcha_manual():
+            logger.debug("Please solve the captcha manually")
+            sleep(10)
+            return
         data = re.findall(
             "geetest_validate: obj.geetest_validate,\n.*?data: \"(.*)\"",
             driver.page_source
@@ -199,9 +203,13 @@ class Crawler(ABC):
     def resolve_recaptcha(self, driver, checkbox: bool, afterlogin_string: str = ""):
         """Resolve Captcha"""
         iframe_present = self._wait_for_iframe(driver)
+        if self.config.get_is_captcha_manual() and iframe_present:
+            logger.debug("Please solve the captcha manually")
+            sleep(10)
+            return
         if checkbox is False and afterlogin_string == "" and iframe_present:
             google_site_key = driver \
-                .find_element_by_class_name("g-recaptcha") \
+                .find_element(By.CLASS_NAME, "g-recaptcha") \
                 .get_attribute("data-sitekey")
 
             try:
@@ -231,8 +239,8 @@ class Crawler(ABC):
                     driver, checkbox, afterlogin_string)
 
     def _clickcaptcha(self, driver, checkbox: bool):
-        driver.switch_to.frame(driver.find_element_by_tag_name("iframe"))
-        recaptcha_checkbox = driver.find_element_by_class_name(
+        driver.switch_to.frame(driver.find_element(By.TAG_NAME, "iframe"))
+        recaptcha_checkbox = driver.find_element(By.CLASS_NAME,
             "recaptcha-checkbox-checkmark")
         recaptcha_checkbox.click()
         self._wait_for_captcha_resolution(driver, checkbox)
